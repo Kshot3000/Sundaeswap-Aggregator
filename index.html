@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SundaeSwap DEX Aggregator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SundaeSwap DEX Aggregator — Simulated Quotes</title>
+<meta name="description" content="Simulated Cardano DEX aggregator: compares modelled quotes across SundaeSwap, Minswap, WingRiders and VyFinance. Not live prices.">
+<meta property="og:title" content="SundaeSwap DEX Aggregator — Simulated Quotes">
+<meta property="og:description" content="Simulated Cardano DEX quote comparison. Fixed model rates, not live market prices.">
+<meta property="og:url" content="https://github.com/Kshot3000/Sundaeswap-Aggregator">
 <style>
 body{font-family:system-ui,sans-serif;margin:2rem;background:#0b1220;color:#e2e8f0}
 .card{background:#1e293b;padding:1rem;border-radius:12px;margin-bottom:1rem}
@@ -10,47 +15,66 @@ input,select,button{padding:0.5rem;margin:0.25rem}
 button{background:#38bdf8;color:#0b1220;border:none;border-radius:6px;cursor:pointer}
 table{width:100%;border-collapse:collapse;margin-top:1rem}
 th,td{padding:0.5rem;border-bottom:1px solid #334155;text-align:left}
+.banner{background:#78350f;color:#fde68a;padding:0.75rem 1rem;border-radius:8px;margin-bottom:1rem}
+.error{color:#fca5a5;min-height:1.25em}
 </style>
 </head>
 <body>
 <h1>SundaeSwap DEX Aggregator</h1>
+<div class="banner" role="note"><strong>Simulated quotes.</strong> Rates below come from a fixed model, not live market data. Do not trade on them — check a live DEX first.</div>
 <div class="card">
 <label>From<br><input id="from" value="ADA"></label>
 <label>To<br><input id="to" value="USDC"></label>
-<label>Amount<br><input id="amount" type="number" value="1000"></label>
+<label>Amount<br><input id="amount" type="number" value="1000" min="0" step="any"></label>
+<label>Slippage (bps)<br><input id="slippage" type="number" value="50" min="0" max="1000" step="1"></label>
 <button onclick="run()">Get Best Quote</button>
+<p class="error" id="error" role="alert"></p>
 </div>
 <div class="card">
-<table id="results"><thead><tr><th>DEX</th><th>Net Out</th><th>Fee</th></tr></thead><tbody></tbody></table>
+<table id="results"><thead><tr><th>DEX</th><th>Net Out</th><th>Fee</th><th>Min Received</th></tr></thead><tbody></tbody></table>
 </div>
 <script>
-const dexes=["SundaeSwap","Minswap","WingRiders","Jupiter"];
-function run(){
- const from=document.getElementById('from').value;
- const to=document.getElementById('to').value;
- const amt=parseFloat(document.getElementById('amount').value);
- const tbody=document.querySelector('#results tbody');
- tbody.innerHTML='';
- const spreads={"SundaeSwap":0.995,"Minswap":0.998,"WingRiders":0.992,"Jupiter":0.997};
- const base=from==="ADA"&&to==="USDC"?0.5:2.0;
- const rows=[];
- dexes.forEach(d=>{
-   const price=amt*base*spreads[d];
+const DEXES=["SundaeSwap","Minswap","WingRiders","VyFinance"];
+const SPREADS={"SundaeSwap":0.995,"Minswap":0.998,"WingRiders":0.992,"VyFinance":0.996};
+function computeQuotes(from,to,amt,slippageBps){
+ from=String(from||"").trim().toUpperCase();
+ to=String(to||"").trim().toUpperCase();
+ if(!from||!to||!/^[A-Z0-9]+$/.test(from)||!/^[A-Z0-9]+$/.test(to)) throw new Error("Enter valid token symbols.");
+ if(from===to) throw new Error("From and To tokens must differ — a same-token swap has no quote.");
+ if(!Number.isFinite(amt)||amt<=0) throw new Error("Amount must be a number greater than zero.");
+ if(!Number.isFinite(slippageBps)||slippageBps<0||slippageBps>1000) throw new Error("Slippage must be between 0 and 1000 bps.");
+ const base=(from==="ADA"&&to==="USDC")?0.5:2.0;
+ const rows=DEXES.map(d=>{
+   const price=amt*base*SPREADS[d];
    const fee=price*0.003;
    const net=price-fee;
-   rows.push({dex:d,net,fee});
+   return {dex:d,net,fee,minOut:net*(10000-slippageBps)/10000};
  });
  rows.sort((a,b)=>b.net-a.net);
+ return rows;
+}
+function run(){
+ const err=document.getElementById('error');
+ const tbody=document.querySelector('#results tbody');
+ tbody.innerHTML='';
+ err.textContent='';
+ let rows;
+ try{
+   rows=computeQuotes(document.getElementById('from').value,document.getElementById('to').value,parseFloat(document.getElementById('amount').value),parseFloat(document.getElementById('slippage').value));
+ }catch(e){ err.textContent=e.message; return; }
  rows.forEach(r=>{
    const tr=document.createElement('tr');
-   tr.innerHTML=`<td>${r.dex}</td><td>${r.net.toFixed(6)}</td><td>${r.fee.toFixed(6)}</td>`;
+   [r.dex,r.net.toFixed(6),r.fee.toFixed(6),r.minOut.toFixed(6)].forEach(v=>{
+     const td=document.createElement('td'); td.textContent=v; tr.appendChild(td);
+   });
    tbody.appendChild(tr);
  });
 }
 run();
 </script>
 <footer style="margin-top:2rem;font-size:0.85rem;color:#94a3b8">
-Donations: addr1q8hnl6vl5a6k3rw3n5g3jtte696zcl76kfatzv7gpswa9r0dj7fma6klq55y4ffm7tf0em09udnyhuk4ah92pl5x9jpqjae44v
+<p>Simulated quotes only — not live prices. Built by <a href="https://x.com/kshot9000" style="color:#38bdf8">X · @kshot9000</a> · <a href="https://github.com/Kshot3000" style="color:#38bdf8">github.com/Kshot3000</a></p>
+<p>Donations: addr1q8hnl6vl5a6k3rw3n5g3jtte696zcl76kfatzv7gpswa9r0dj7fma6klq55y4ffm7tf0em09udnyhuk4ah92pl5x9jpqjae44v</p>
 </footer>
 </body>
 </html>

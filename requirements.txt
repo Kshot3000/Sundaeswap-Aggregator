@@ -1,3 +1,2 @@
-requests>=2.32.0
-python-dotenv>=1.0.0
-pydantic>=2.0.0
+# aggregator.py and the tests run on the Python standard library only.
+# There are intentionally no third-party dependencies to install.
