@@ -98,6 +98,71 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("Minswap", proc.stdout)
         self.assertIn("min received", proc.stdout)
 
+    def test_fetch_quote_validates_like_aggregate(self):
+        # fetch_quote used to compute blindly: same-token, negative and
+        # NaN quotes came back as if real, an Infinity amount crashed
+        # with decimal.InvalidOperation (not the ValueError contract),
+        # and 99999 bps slippage returned a negative min_out.
+        bad_calls = [
+            (("Minswap", "ADA", "ADA", Decimal("100")), {}),
+            (("Minswap", "ADA", "USDC", Decimal("-50")), {}),
+            (("Minswap", "ADA", "USDC", Decimal("0")), {}),
+            (("Minswap", "ADA", "USDC", Decimal("NaN")), {}),
+            (("Minswap", "ADA", "USDC", Decimal("Infinity")), {}),
+            (("Minswap", "ADA", "USDC", Decimal("100")),
+             {"slippage_bps": 99999}),
+            (("Minswap", "ADA", "USDC", Decimal("100")),
+             {"slippage_bps": -500}),
+        ]
+        for args, kwargs in bad_calls:
+            with self.assertRaises(ValueError, msg=str((args, kwargs))):
+                aggregator.fetch_quote(*args, **kwargs)
+
+    def test_fetch_quote_rejects_unknown_dex(self):
+        # An unknown or mis-cased DEX used to get a 1.0 spread, which
+        # out-quotes every real DEX in the list.
+        for dex in ("FakeDEX", "minswap", "MINswap", "", "Sundae"):
+            with self.assertRaises(ValueError, msg=dex):
+                aggregator.fetch_quote(dex, "ADA", "USDC", Decimal("1000"))
+
+    def test_fetch_quote_normalizes_tokens(self):
+        # Lowercase symbols must find the ADA->USDC base rate, not the
+        # generic fallback (the pre-normalization behaviour).
+        q = aggregator.fetch_quote("Minswap", "ada", "usdc",
+                                   Decimal("1000"))
+        self.assertEqual(q["price"], Decimal("499.000"))
+        self.assertEqual(q["from_token"], "ADA")
+        self.assertEqual(q["to_token"], "USDC")
+
+    def test_rejects_non_integer_slippage(self):
+        # Floats poisoned the exact Decimal maths with binary noise
+        # (33.3 bps -> a 28-digit min_out), a string crashed with an
+        # uncaught TypeError, and True was silently read as 1 bp. The
+        # CLI already enforces int via argparse; the library now does
+        # the same, with ValueError.
+        for bps in (50.5, 33.3, "50", True, Decimal("50")):
+            with self.assertRaises(ValueError, msg=repr(bps)):
+                aggregator.aggregate("ADA", "USDC", Decimal("1"),
+                                     slippage_bps=bps)
+            with self.assertRaises(ValueError, msg=repr(bps)):
+                aggregator.fetch_quote("Minswap", "ADA", "USDC",
+                                       Decimal("1"), slippage_bps=bps)
+
+    def test_rejects_unicode_symbols(self):
+        # str.isalnum() accepted these; the web UI's /^[A-Z0-9]+$/
+        # rejects them. Both surfaces now apply the ASCII rule.
+        for tok in ("ADÄ", "ＡＤＡ", "ADA²", "ADA①"):
+            with self.assertRaises(ValueError, msg=tok):
+                aggregator.aggregate(tok, "USDC", Decimal("1"))
+
+    def test_cli_rejects_fractional_slippage(self):
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "aggregator.py"),
+             "--from", "ADA", "--to", "USDC", "--amount", "100",
+             "--slippage-bps", "50.5"],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
 
 class RepoHygieneTests(unittest.TestCase):
     def test_readme_flags_exist_in_cli(self):
@@ -134,6 +199,16 @@ class RepoHygieneTests(unittest.TestCase):
         # The web spreads must match the Python model exactly.
         for dex, spread in aggregator.SPREADS.items():
             self.assertIn(f'"{dex}":{spread}', html, dex)
+
+    def test_web_ui_integer_slippage_and_overflow_guard(self):
+        html = (ROOT / "index.html").read_text()
+        # Integer bps, matching the CLI's type=int and the library.
+        self.assertIn("Number.isInteger", html)
+        self.assertIn("whole number of basis points", html)
+        # Huge amounts used to render Infinity min-received (ADA->USDC)
+        # or NaN rows in arbitrary order (Inf - Inf on the generic
+        # pair); the UI must refuse instead of rendering them.
+        self.assertIn("too large to quote", html)
 
 
 if __name__ == "__main__":

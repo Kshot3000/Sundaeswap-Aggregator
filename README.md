@@ -15,8 +15,10 @@ protection.
 - Best price routing over the simulated quotes
 - Fee estimation (0.3% simulated swap fee) and a minimum-received
   figure from a configurable slippage tolerance (`--slippage-bps`)
-- Input validation: positive finite amounts, distinct valid token
-  symbols, slippage within 0–1000 bps
+- Input validation on every surface (CLI, library functions, and web
+  UI): positive finite amounts, distinct ASCII token symbols, integer
+  slippage within 0–1000 bps — a single-quote `fetch_quote` call is
+  validated exactly like a full `aggregate`, including the DEX name
 - Simple CLI and web UI sharing the same model
 
 ## Usage
@@ -35,6 +37,8 @@ Open `index.html` in a browser for interactive simulated quotes.
   called, in the CLI or the web UI.
 - Only ADA→USDC has its own model rate; every other pair uses the
   generic fallback rate. Neither is market data.
+- The web UI computes in floating point and refuses amounts whose
+  quote would overflow it; the CLI's Decimal maths has no such limit.
 
 ## Tests
 ```bash

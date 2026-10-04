@@ -9,6 +9,7 @@ as a real quote — check a live DEX before trading.
 """
 
 import argparse
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List
 
@@ -35,6 +36,12 @@ FEE_RATE = Decimal("0.003")  # 0.3% simulated swap fee
 DEFAULT_SLIPPAGE_BPS = 50  # 0.5%
 MAX_SLIPPAGE_BPS = 1000  # 10%
 
+# Token symbols are ASCII letters/digits — the same rule the web UI
+# enforces (/^[A-Z0-9]+$/). str.isalnum() also accepts Unicode letters
+# and numerics (e.g. "ADÄ", "ＡＤＡ", "ADA²"), which the web UI rejects,
+# so the two surfaces used to disagree on what a valid symbol is.
+TOKEN_RE = re.compile(r"^[A-Z0-9]+$")
+
 
 def normalize_token(token: str) -> str:
     return (token or "").strip().upper()
@@ -42,11 +49,13 @@ def normalize_token(token: str) -> str:
 
 def validate_inputs(from_token: str, to_token: str, amount: Decimal,
                     slippage_bps: int = DEFAULT_SLIPPAGE_BPS) -> None:
-    """Raise ValueError unless the trade inputs are sane."""
-    if not from_token or not to_token:
-        raise ValueError("token symbols must not be empty")
+    """Raise ValueError unless the trade inputs are sane.
+
+    Tokens are expected already normalized (see normalize_token);
+    aggregate() and fetch_quote() normalize before calling this.
+    """
     for token in (from_token, to_token):
-        if not token.isalnum():
+        if not isinstance(token, str) or not TOKEN_RE.match(token):
             raise ValueError(f"invalid token symbol: {token!r}")
     if from_token == to_token:
         raise ValueError("from and to tokens must differ "
@@ -55,6 +64,14 @@ def validate_inputs(from_token: str, to_token: str, amount: Decimal,
         raise ValueError("amount must be a finite number")
     if amount <= 0:
         raise ValueError("amount must be greater than zero")
+    # Basis points are integers by definition (the CLI enforces this via
+    # type=int and the web UI via Number.isInteger). A float used to slip
+    # through and poison the exact Decimal maths with binary noise
+    # (33.3 bps produced a 28-digit min_out), a string crashed with an
+    # uncaught TypeError, and True was silently read as 1 bp.
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int):
+        raise ValueError("slippage_bps must be an integer number of "
+                         "basis points")
     if not (0 <= slippage_bps <= MAX_SLIPPAGE_BPS):
         raise ValueError(
             f"slippage must be between 0 and {MAX_SLIPPAGE_BPS} bps")
@@ -63,9 +80,23 @@ def validate_inputs(from_token: str, to_token: str, amount: Decimal,
 def fetch_quote(dex: str, from_token: str, to_token: str,
                 amount: Decimal,
                 slippage_bps: int = DEFAULT_SLIPPAGE_BPS) -> Dict:
-    """One simulated quote. All money values stay Decimal end-to-end."""
+    """One simulated quote. All money values stay Decimal end-to-end.
+
+    Validates exactly like aggregate(): this used to compute blindly,
+    so direct callers got quotes for same-token swaps, negative and
+    NaN amounts (an Infinity amount crashed with InvalidOperation),
+    out-of-range slippage (99999 bps returned a negative min_out), and
+    unknown/mis-cased DEX names — which silently received a 1.0 spread
+    and out-quoted every real DEX.
+    """
+    if dex not in SPREADS:
+        raise ValueError(f"unknown DEX: {dex!r} "
+                         f"(expected one of {', '.join(DEXES)})")
+    from_token = normalize_token(from_token)
+    to_token = normalize_token(to_token)
+    validate_inputs(from_token, to_token, amount, slippage_bps)
     base_rate = BASE_RATES.get((from_token, to_token), DEFAULT_BASE_RATE)
-    spread = SPREADS.get(dex, Decimal("1"))
+    spread = SPREADS[dex]
     price = amount * base_rate * spread
     fee = price * FEE_RATE
     net = price - fee

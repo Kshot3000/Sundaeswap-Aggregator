@@ -42,13 +42,15 @@ function computeQuotes(from,to,amt,slippageBps){
  if(!from||!to||!/^[A-Z0-9]+$/.test(from)||!/^[A-Z0-9]+$/.test(to)) throw new Error("Enter valid token symbols.");
  if(from===to) throw new Error("From and To tokens must differ — a same-token swap has no quote.");
  if(!Number.isFinite(amt)||amt<=0) throw new Error("Amount must be a number greater than zero.");
- if(!Number.isFinite(slippageBps)||slippageBps<0||slippageBps>1000) throw new Error("Slippage must be between 0 and 1000 bps.");
+ if(!Number.isInteger(slippageBps)||slippageBps<0||slippageBps>1000) throw new Error("Slippage must be a whole number of basis points between 0 and 1000.");
  const base=(from==="ADA"&&to==="USDC")?0.5:2.0;
  const rows=DEXES.map(d=>{
    const price=amt*base*SPREADS[d];
    const fee=price*0.003;
    const net=price-fee;
-   return {dex:d,net,fee,minOut:net*(10000-slippageBps)/10000};
+   const minOut=net*(10000-slippageBps)/10000;
+   if(!Number.isFinite(price)||!Number.isFinite(fee)||!Number.isFinite(net)||!Number.isFinite(minOut)) throw new Error("Amount is too large to quote — the result overflows. Try a smaller amount.");
+   return {dex:d,net,fee,minOut};
  });
  rows.sort((a,b)=>b.net-a.net);
  return rows;
